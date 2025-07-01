@@ -1,0 +1,1423 @@
+#v39 worked ok
+
+library(shiny)
+library(shinydashboard)
+library(plotly)
+library(DT)
+library(dplyr)
+
+# Define UI
+ui <- dashboardPage(
+  dashboardHeader(title = "Multi-Layer Soil Oxygen Diffusion Model"),
+  
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Oxygen Profile", tabName = "profile", icon = icon("chart-line")),
+      menuItem("Soil Layers", tabName = "soil_layers", icon = icon("layer-group")),
+      menuItem("Respiration Components", tabName = "respiration", icon = icon("leaf")),
+      menuItem("Model Theory", tabName = "theory", icon = icon("book"))
+    )
+  ),
+  
+  dashboardBody(
+    tabItems(
+      # Main oxygen profile tab
+      tabItem(tabName = "profile",
+        fluidRow(
+          box(width = 4, status = "primary", solidHeader = TRUE,
+              title = "Environmental Conditions",
+              
+              h4("Atmospheric Conditions"),
+              numericInput("atmospheric_pressure", "Atmospheric Pressure (kPa)", 
+                          value = 101.3, min = 80, max = 110, step = 0.1),
+              numericInput("temperature", "Temperature (°C)", 
+                          value = 20, min = 5, max = 35, step = 1),
+              numericInput("atmospheric_O2", "Atmospheric O₂ (%)", 
+                          value = 20.9, min = 15, max = 25, step = 0.1),
+              
+              h4("Soil Chemistry"),
+              numericInput("soil_pH", "Soil pH", 
+                          value = 6.5, min = 4.0, max = 9.0, step = 0.1),
+              checkboxInput("enable_eh", "Calculate Redox Potential (Eh)", value = TRUE),
+              
+              h4("Model Domain"),
+              numericInput("max_depth", "Maximum Depth (cm)", 
+                          value = 150, min = 50, max = 300, step = 10),
+              numericInput("depth_resolution", "Depth Resolution (cm)", 
+                          value = 1, min = 0.1, max = 5, step = 0.1),
+              
+              h4("Time Controls"),
+              checkboxInput("enable_time_series", "Enable Time Series", value = FALSE),
+              
+              conditionalPanel(
+                condition = "input.enable_time_series",
+                sliderInput("current_time", "Current Time (days)", 
+                           min = 0, max = 30, value = 0, step = 0.1,
+                           animate = animationOptions(interval = 200, loop = TRUE)),
+                
+                selectInput("time_scenario", "Water Content Scenario:",
+                           choices = list(
+                             "Steady State" = "steady",
+                             "Rainfall Event" = "rainfall",
+                             "Drying Period" = "drying", 
+                             "Seasonal Cycle" = "seasonal",
+                             "Flood Event" = "flood"
+                           ), selected = "steady"),
+                
+                numericInput("event_day", "Event Start Day", 
+                            value = 5, min = 0, max = 25, step = 0.5),
+                
+                hr(),
+                p("Time series modifies WFPS based on scenario."),
+                p("Use animation controls to see changes over time.")
+              ),
+              
+              h4("Display Units"),
+              selectInput("conc_units", "Concentration Units:",
+                         choices = list("kg/m³" = "kg_m3", "mg/m³" = "mg_m3", "%" = "percent"),
+                         selected = "mg_m3"),
+              
+              hr(),
+              actionButton("update_model", "Update Model", 
+                          class = "btn-primary", width = "100%")
+          ),
+          
+          box(width = 8, status = "primary", solidHeader = TRUE,
+              title = "Oxygen Concentration Profile",
+              plotlyOutput("oxygen_profile", height = "500px")
+          )
+        ),
+        
+        fluidRow(
+          box(width = 6, status = "info", solidHeader = TRUE,
+              title = "Calculated Parameters",
+              verbatimTextOutput("calculated_params")
+          ),
+          
+          box(width = 6, status = "info", solidHeader = TRUE,
+              title = "Model Information",
+              verbatimTextOutput("model_info")
+          )
+        )
+      ),
+      
+      # Soil layers tab
+      tabItem(tabName = "soil_layers",
+        fluidRow(
+          box(width = 12, status = "primary", solidHeader = TRUE,
+              title = "Soil Layer Configuration",
+              p("Define up to 4 soil layers with different properties. Layers must be sequential and non-overlapping."),
+              
+              fluidRow(
+                column(3,
+                  h4("Layer 1 (Surface)", style = "color: #3c8dbc;"),
+                  numericInput("layer1_top", "Top Depth (cm)", value = 0, min = 0, max = 300, step = 1),
+                  numericInput("layer1_bottom", "Bottom Depth (cm)", value = 30, min = 1, max = 300, step = 1),
+                  checkboxInput("layer1_active", "Active", value = TRUE),
+                  
+                  conditionalPanel(
+                    condition = "input.layer1_active",
+                    h5("Physical Properties"),
+                    numericInput("layer1_porosity", "Total Porosity", value = 0.50, min = 0.2, max = 0.8, step = 0.01),
+                    numericInput("layer1_wfps", "Water-Filled Pore Space (%)", value = 50, min = 0, max = 100, step = 1),
+                    
+                    h5("Respiration Properties"),
+                    numericInput("layer1_root_density", "Root Density (kg/m³)", value = 1.0, min = 0, max = 10, step = 0.1),
+                    numericInput("layer1_som", "SOM Content (%)", value = 4.0, min = 0, max = 15, step = 0.1)
+                  )
+                ),
+                
+                column(3,
+                  h4("Layer 2", style = "color: #00a65a;"),
+                  numericInput("layer2_top", "Top Depth (cm)", value = 30, min = 0, max = 300, step = 1),
+                  numericInput("layer2_bottom", "Bottom Depth (cm)", value = 60, min = 1, max = 300, step = 1),
+                  checkboxInput("layer2_active", "Active", value = TRUE),
+                  
+                  conditionalPanel(
+                    condition = "input.layer2_active",
+                    h5("Physical Properties"),
+                    numericInput("layer2_porosity", "Total Porosity", value = 0.45, min = 0.2, max = 0.8, step = 0.01),
+                    numericInput("layer2_wfps", "Water-Filled Pore Space (%)", value = 65, min = 0, max = 100, step = 1),
+                    
+                    h5("Respiration Properties"),
+                    numericInput("layer2_root_density", "Root Density (kg/m³)", value = 0.5, min = 0, max = 10, step = 0.1),
+                    numericInput("layer2_som", "SOM Content (%)", value = 2.5, min = 0, max = 15, step = 0.1)
+                  )
+                ),
+                
+                column(3,
+                  h4("Layer 3", style = "color: #f39c12;"),
+                  numericInput("layer3_top", "Top Depth (cm)", value = 60, min = 0, max = 300, step = 1),
+                  numericInput("layer3_bottom", "Bottom Depth (cm)", value = 100, min = 1, max = 300, step = 1),
+                  checkboxInput("layer3_active", "Active", value = TRUE),
+                  
+                  conditionalPanel(
+                    condition = "input.layer3_active",
+                    h5("Physical Properties"),
+                    numericInput("layer3_porosity", "Total Porosity", value = 0.40, min = 0.2, max = 0.8, step = 0.01),
+                    numericInput("layer3_wfps", "Water-Filled Pore Space (%)", value = 80, min = 0, max = 100, step = 1),
+                    
+                    h5("Respiration Properties"),
+                    numericInput("layer3_root_density", "Root Density (kg/m³)", value = 0.2, min = 0, max = 10, step = 0.1),
+                    numericInput("layer3_som", "SOM Content (%)", value = 1.5, min = 0, max = 15, step = 0.1)
+                  )
+                ),
+                
+                column(3,
+                  h4("Layer 4 (Deep)", style = "color: #dd4b39;"),
+                  numericInput("layer4_top", "Top Depth (cm)", value = 100, min = 0, max = 300, step = 1),
+                  numericInput("layer4_bottom", "Bottom Depth (cm)", value = 150, min = 1, max = 300, step = 1),
+                  checkboxInput("layer4_active", "Active", value = TRUE),
+                  
+                  conditionalPanel(
+                    condition = "input.layer4_active",
+                    h5("Physical Properties"),
+                    numericInput("layer4_porosity", "Total Porosity", value = 0.35, min = 0.2, max = 0.8, step = 0.01),
+                    numericInput("layer4_wfps", "Water-Filled Pore Space (%)", value = 90, min = 0, max = 100, step = 1),
+                    
+                    h5("Respiration Properties"),
+                    numericInput("layer4_root_density", "Root Density (kg/m³)", value = 0.05, min = 0, max = 10, step = 0.01),
+                    numericInput("layer4_som", "SOM Content (%)", value = 1.0, min = 0, max = 15, step = 0.1)
+                  )
+                )
+              )
+          )
+        ),
+        
+        fluidRow(
+          box(width = 6, status = "primary", solidHeader = TRUE,
+              title = "Soil Properties vs Depth",
+              plotlyOutput("soil_properties_plot", height = "500px")
+          ),
+          
+          box(width = 6, status = "primary", solidHeader = TRUE,
+              title = "Diffusion Coefficient vs Depth",
+              plotlyOutput("diffusion_profile", height = "500px")
+          )
+        ),
+        
+        fluidRow(
+          box(width = 12, status = "primary", solidHeader = TRUE,
+              title = "Global Respiration Parameters",
+              
+              fluidRow(
+                column(4,
+                  h4("Root Parameters"),
+                  numericInput("root_resp_rate", "Root Respiration Rate (kg O₂/kg root/s)", 
+                              value = 1e-6, min = 1e-8, max = 1e-4, step = 1e-7),
+                  numericInput("Q10_roots", "Root Q₁₀", 
+                              value = 2.0, min = 1.5, max = 3.5, step = 0.1)
+                ),
+                
+                column(4,
+                  h4("Microbial Parameters"),
+                  numericInput("microbial_resp_rate", "Microbial Resp. Rate (kg O₂/kg SOM/s)", 
+                              value = 2e-7, min = 1e-9, max = 1e-5, step = 1e-8),
+                  numericInput("Q10_microbes", "Microbial Q₁₀", 
+                              value = 2.5, min = 1.5, max = 4.0, step = 0.1)
+                ),
+                
+                column(4,
+                  h4("Environmental Controls"),
+                  selectInput("tortuosity_model", "Tortuosity Model:",
+                             choices = list(
+                               "Millington-Quirk" = "millington_quirk",
+                               "Moldrup et al." = "moldrup",
+                               "Custom" = "custom"
+                             ), selected = "millington_quirk"),
+                  
+                  conditionalPanel(
+                    condition = "input.tortuosity_model == 'custom'",
+                    numericInput("custom_tortuosity", "Custom Tortuosity Factor", 
+                               value = 0.66, min = 0.1, max = 1.0, step = 0.01)
+                  ),
+                  
+                  numericInput("moisture_optimum", "Optimal Water Content", 
+                              value = 0.3, min = 0.1, max = 0.5, step = 0.01)
+                )
+              )
+          )
+        )
+      ),
+      
+      # Respiration tab
+      tabItem(tabName = "respiration",
+        fluidRow(
+          box(width = 12, status = "primary", solidHeader = TRUE,
+              title = "Respiration Components vs Depth",
+              plotlyOutput("respiration_components", height = "500px")
+          )
+        ),
+        
+        fluidRow(
+          box(width = 12, status = "primary", solidHeader = TRUE,
+              title = "Respiration Data Table",
+              DT::dataTableOutput("respiration_table")
+          )
+        )
+      ),
+      
+      # Theory tab
+      tabItem(tabName = "theory",
+        fluidRow(
+          box(width = 12, status = "primary", solidHeader = TRUE,
+              title = "Multi-Layer Model Theory",
+              
+              h3("1. Multi-Layer Diffusion"),
+              p("For a layered soil system, the diffusion equation is solved piecewise:"),
+              withMathJax("$$\\frac{d}{dz}\\left(D_i\\frac{dC}{dz}\\right) = q_i(z) \\text{ for layer } i$$"),
+              
+              p("With boundary conditions at layer interfaces ensuring continuity of concentration and flux."),
+              
+              h3("2. Layer-Specific Properties"),
+              h4("Diffusion Coefficient in Each Layer:"),
+              withMathJax("$$D_{eff,i} = D_0(T) \\cdot \\frac{\\theta_{a,i}}{\\phi_i} \\cdot \\tau_i$$"),
+              
+              h4("Respiration in Each Layer:"),
+              withMathJax("$$q_i(z) = \\rho_{root,i} \\cdot R_{root} \\cdot f_T + SOM_i \\cdot R_{microbe} \\cdot f_T \\cdot f_{\\theta}$$"),
+              
+              h3("3. Unit Conversions"),
+              h4("Oxygen Concentration Units:"),
+              tags$ul(
+                tags$li("kg/m³ → mg/m³: multiply by 1000"),
+                tags$li("kg/m³ → %: (C/C_atm) × 100"),
+                tags$li("At 20°C, 1 atm: C_atm ≈ 0.276 kg/m³")
+              ),
+              
+              h4("Standard Conditions:"),
+              p("Atmospheric O₂ concentration at 20°C, 1 atm ≈ 276 mg/m³ (20.9%)"),
+              
+              h3("4. Typical Layer Properties"),
+              tags$div(
+                style = "background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 15px;",
+                h4("Surface Layer (0-30 cm):"),
+                p("• High porosity (0.45-0.55)"),
+                p("• High root density (0.5-2.0 kg/m³)"),
+                p("• High SOM content (3-6%)"),
+                
+                h4("Subsoil Layers (30-100 cm):"),
+                p("• Moderate porosity (0.35-0.45)"),
+                p("• Decreasing root density (0.1-0.5 kg/m³)"),
+                p("• Lower SOM content (1-3%)"),
+                
+                h4("Deep Layer (>100 cm):"),
+                p("• Lower porosity (0.30-0.40)"),
+                p("• Minimal roots (<0.1 kg/m³)"),
+                p("• Low SOM content (<1.5%)")
+              )
+            )
+        )
+      )
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output, session) {
+  
+  # Reactive values to store model results
+  model_results <- reactiveVal(NULL)
+  
+  # Calculate time-varying WFPS based on scenario
+  calculate_time_varying_wfps <- function(base_wfps, layer_depth, current_time, scenario, event_day) {
+    if (!input$enable_time_series || scenario == "steady") {
+      return(base_wfps)
+    }
+    
+    # Layer-specific response factors (surface layers respond faster)
+    depth_factor <- exp(-layer_depth * 2)  # Surface = 1, deep = small
+    
+    if (scenario == "rainfall") {
+      # Rainfall event: rapid increase then slow drainage
+      if (current_time >= event_day) {
+        days_since_event <- current_time - event_day
+        
+        # Immediate increase in WFPS
+        max_increase <- (100 - base_wfps) * 0.8 * depth_factor
+        
+        # Exponential drainage with depth-dependent time constant
+        drainage_rate <- 0.3 * (1 + layer_depth)  # Slower drainage at depth
+        wfps_increase <- max_increase * exp(-days_since_event * drainage_rate)
+        
+        return(min(100, base_wfps + wfps_increase))
+      }
+      return(base_wfps)
+      
+    } else if (scenario == "drying") {
+      # Gradual drying from initially wet conditions
+      if (current_time >= event_day) {
+        days_since_start <- current_time - event_day
+        
+        # Start from high WFPS and dry out
+        initial_wfps <- min(100, base_wfps + 30 * depth_factor)
+        drying_rate <- 0.15 * (2 - depth_factor)  # Faster drying at surface
+        
+        current_wfps <- initial_wfps - (initial_wfps - base_wfps) * 
+                       (1 - exp(-days_since_start * drying_rate))
+        
+        return(max(base_wfps * 0.5, current_wfps))
+      }
+      return(min(100, base_wfps + 30 * depth_factor))
+      
+    } else if (scenario == "seasonal") {
+      # Sinusoidal variation (28-day cycle)
+      cycle_position <- (current_time / 28) * 2 * pi
+      seasonal_variation <- 20 * sin(cycle_position) * depth_factor
+      
+      return(max(10, min(95, base_wfps + seasonal_variation)))
+      
+    } else if (scenario == "flood") {
+      # Flood event: very rapid saturation then slow drainage
+      if (current_time >= event_day) {
+        days_since_flood <- current_time - event_day
+        
+        if (days_since_flood < 1) {
+          # Rapid saturation phase
+          saturation_level <- 95 + 5 * depth_factor
+          return(base_wfps + (saturation_level - base_wfps) * days_since_flood)
+        } else {
+          # Slow drainage phase
+          drainage_days <- days_since_flood - 1
+          saturation_level <- 95 + 5 * depth_factor
+          drainage_rate <- 0.1 * (1 + layer_depth * 0.5)
+          
+          current_wfps <- saturation_level - (saturation_level - base_wfps) * 
+                         (1 - exp(-drainage_days * drainage_rate))
+          
+          return(max(base_wfps, current_wfps))
+        }
+      }
+      return(base_wfps)
+    }
+    
+    return(base_wfps)
+  }
+  
+  # Get active layers with time-varying properties
+  get_active_layers <- reactive({
+    layers <- list()
+    
+    current_time <- if (input$enable_time_series) input$current_time else 0
+    scenario <- if (input$enable_time_series) input$time_scenario else "steady"
+    event_day <- if (input$enable_time_series) input$event_day else 5
+    
+    if (input$layer1_active) {
+      # Calculate time-varying WFPS
+      time_wfps <- calculate_time_varying_wfps(
+        input$layer1_wfps, 
+        (input$layer1_top + input$layer1_bottom) / 200,  # Average depth in meters
+        current_time, scenario, event_day
+      )
+      water_content <- input$layer1_porosity * (time_wfps / 100)
+      
+      layers[[1]] <- list(
+        top = input$layer1_top/100, bottom = input$layer1_bottom/100,
+        porosity = input$layer1_porosity, 
+        wfps = time_wfps,
+        base_wfps = input$layer1_wfps,
+        water = water_content,
+        root_density = input$layer1_root_density, som = input$layer1_som/100,
+        color = "#3c8dbc", name = "Layer 1"
+      )
+    }
+    
+    if (input$layer2_active) {
+      time_wfps <- calculate_time_varying_wfps(
+        input$layer2_wfps,
+        (input$layer2_top + input$layer2_bottom) / 200,
+        current_time, scenario, event_day
+      )
+      water_content <- input$layer2_porosity * (time_wfps / 100)
+      
+      layers[[length(layers) + 1]] <- list(
+        top = input$layer2_top/100, bottom = input$layer2_bottom/100,
+        porosity = input$layer2_porosity,
+        wfps = time_wfps,
+        base_wfps = input$layer2_wfps,
+        water = water_content,
+        root_density = input$layer2_root_density, som = input$layer2_som/100,
+        color = "#00a65a", name = "Layer 2"
+      )
+    }
+    
+    if (input$layer3_active) {
+      time_wfps <- calculate_time_varying_wfps(
+        input$layer3_wfps,
+        (input$layer3_top + input$layer3_bottom) / 200,
+        current_time, scenario, event_day
+      )
+      water_content <- input$layer3_porosity * (time_wfps / 100)
+      
+      layers[[length(layers) + 1]] <- list(
+        top = input$layer3_top/100, bottom = input$layer3_bottom/100,
+        porosity = input$layer3_porosity,
+        wfps = time_wfps,
+        base_wfps = input$layer3_wfps,
+        water = water_content,
+        root_density = input$layer3_root_density, som = input$layer3_som/100,
+        color = "#f39c12", name = "Layer 3"
+      )
+    }
+    
+    if (input$layer4_active) {
+      time_wfps <- calculate_time_varying_wfps(
+        input$layer4_wfps,
+        (input$layer4_top + input$layer4_bottom) / 200,
+        current_time, scenario, event_day
+      )
+      water_content <- input$layer4_porosity * (time_wfps / 100)
+      
+      layers[[length(layers) + 1]] <- list(
+        top = input$layer4_top/100, bottom = input$layer4_bottom/100,
+        porosity = input$layer4_porosity,
+        wfps = time_wfps,
+        base_wfps = input$layer4_wfps,
+        water = water_content,
+        root_density = input$layer4_root_density, som = input$layer4_som/100,
+        color = "#dd4b39", name = "Layer 4"
+      )
+    }
+    
+    return(layers)
+  })
+  
+  # Calculate layer properties at each depth
+  calculate_layer_properties <- reactive({
+    depths <- seq(0, input$max_depth/100, by = input$depth_resolution/100)
+    layers <- get_active_layers()
+    
+    # Initialize vectors
+    porosity <- numeric(length(depths))
+    water_content <- numeric(length(depths))
+    root_density <- numeric(length(depths))
+    som_content <- numeric(length(depths))
+    layer_id <- numeric(length(depths))
+    
+    # Define transition zone width (in meters)
+    transition_width <- input$depth_resolution/100 * 2  # 2 grid points worth
+    
+    # Assign properties based on layers with smooth transitions
+    for (i in seq_along(depths)) {
+      depth <- depths[i]
+      
+      # Find which layer this depth belongs to
+      layer_found <- FALSE
+      for (j in seq_along(layers)) {
+        if (depth >= layers[[j]]$top && depth <= layers[[j]]$bottom) {
+          layer_found <- TRUE
+          
+          # Check if we're near a layer boundary and need transition
+          at_top_boundary <- abs(depth - layers[[j]]$top) < transition_width && j > 1
+          at_bottom_boundary <- abs(depth - layers[[j]]$bottom) < transition_width && j < length(layers)
+          
+          if (at_top_boundary) {
+            # Transition from previous layer
+            prev_layer <- layers[[j-1]]
+            transition_factor <- (depth - layers[[j]]$top + transition_width) / (2 * transition_width)
+            transition_factor <- max(0, min(1, transition_factor))
+            
+            porosity[i] <- prev_layer$porosity * (1 - transition_factor) + layers[[j]]$porosity * transition_factor
+            water_content[i] <- prev_layer$water * (1 - transition_factor) + layers[[j]]$water * transition_factor
+            root_density[i] <- prev_layer$root_density * (1 - transition_factor) + layers[[j]]$root_density * transition_factor
+            som_content[i] <- prev_layer$som * (1 - transition_factor) + layers[[j]]$som * transition_factor
+            layer_id[i] <- j
+            
+          } else if (at_bottom_boundary) {
+            # Transition to next layer
+            next_layer <- layers[[j+1]]
+            transition_factor <- (layers[[j]]$bottom - depth + transition_width) / (2 * transition_width)
+            transition_factor <- max(0, min(1, transition_factor))
+            
+            porosity[i] <- layers[[j]]$porosity * transition_factor + next_layer$porosity * (1 - transition_factor)
+            water_content[i] <- layers[[j]]$water * transition_factor + next_layer$water * (1 - transition_factor)
+            root_density[i] <- layers[[j]]$root_density * transition_factor + next_layer$root_density * (1 - transition_factor)
+            som_content[i] <- layers[[j]]$som * transition_factor + next_layer$som * (1 - transition_factor)
+            layer_id[i] <- j
+            
+          } else {
+            # Interior of layer - use layer properties directly
+            porosity[i] <- layers[[j]]$porosity
+            water_content[i] <- layers[[j]]$water
+            root_density[i] <- layers[[j]]$root_density
+            som_content[i] <- layers[[j]]$som
+            layer_id[i] <- j
+          }
+          break
+        }
+      }
+      
+      # If no layer found, use last layer's properties
+      if (!layer_found && length(layers) > 0) {
+        last_layer <- layers[[length(layers)]]
+        porosity[i] <- last_layer$porosity
+        water_content[i] <- last_layer$water
+        root_density[i] <- last_layer$root_density
+        som_content[i] <- last_layer$som
+        layer_id[i] <- length(layers)
+      }
+    }
+    
+    list(
+      depths = depths,
+      porosity = porosity,
+      water_content = water_content,
+      root_density = root_density,
+      som_content = som_content,
+      layer_id = layer_id,
+      layers = layers
+    )
+  })
+  
+  # Calculate diffusion coefficient
+  calculate_diffusion <- reactive({
+    layer_props <- calculate_layer_properties()
+    
+    # Temperature in Kelvin
+    T_K <- input$temperature + 273.15
+    
+    # Free air diffusion coefficient (temperature corrected)
+    D0_base <- 2.01e-5  # m²/s
+    D0 <- D0_base * (T_K / 293.15)^1.75
+    
+    # Air-filled porosity - this is critical for oxygen diffusion
+    air_porosity <- pmax(0.001, layer_props$porosity - layer_props$water_content)
+    
+    # Calculate WFPS for each depth
+    wfps <- (layer_props$water_content / layer_props$porosity) * 100
+    
+    # More realistic tortuosity calculation
+    if (input$tortuosity_model == "millington_quirk") {
+      # Classic Millington-Quirk model
+      tortuosity <- (air_porosity^(10/3)) / (layer_props$porosity^2)
+    } else if (input$tortuosity_model == "moldrup") {
+      # Moldrup model
+      tortuosity <- (air_porosity^2.5) / (layer_props$porosity^1.5)
+    } else {
+      tortuosity <- rep(input$custom_tortuosity, length(layer_props$depths))
+    }
+    
+    # Ensure minimum tortuosity
+    tortuosity[tortuosity < 1e-6] <- 1e-6
+    
+    # Effective diffusion coefficient with realistic WFPS sensitivity
+    air_fraction <- air_porosity / layer_props$porosity
+    
+    # Create WFPS-based reduction factor that's more realistic
+    # Oxygen diffusion starts to become limited around 60-70% WFPS
+    # and becomes negligible around 85-90% WFPS
+    wfps_factor <- rep(1, length(wfps))
+    
+    # Gradual decline from 60% to 85% WFPS
+    moderate_wet <- wfps >= 60 & wfps < 85
+    wfps_factor[moderate_wet] <- (85 - wfps[moderate_wet]) / 25  # Linear decline
+    
+    # Very low diffusion above 85% WFPS
+    very_wet <- wfps >= 85
+    wfps_factor[very_wet] <- 0.01 * exp(-(wfps[very_wet] - 85) / 5)  # Exponential decline
+    
+    # Standard diffusion calculation
+    D_eff <- D0 * air_fraction * tortuosity * wfps_factor
+    
+    # Absolute minimum to prevent numerical issues
+    D_eff[D_eff < 1e-15] <- 1e-15
+    
+    list(
+      depths = layer_props$depths,
+      D0 = D0,
+      porosity = layer_props$porosity,
+      air_porosity = air_porosity,
+      air_fraction = air_fraction,
+      wfps = wfps,
+      wfps_factor = wfps_factor,
+      tortuosity = tortuosity,
+      D_eff = D_eff,
+      layer_id = layer_props$layer_id
+    )
+  })
+  
+  # Calculate respiration components
+  calculate_respiration <- reactive({
+    layer_props <- calculate_layer_properties()
+    
+    # Temperature factors
+    temp_factor_roots <- input$Q10_roots^((input$temperature - 20)/10)
+    temp_factor_microbes <- input$Q10_microbes^((input$temperature - 20)/10)
+    
+    # Root respiration
+    root_respiration <- layer_props$root_density * input$root_resp_rate * temp_factor_roots
+    
+    # Microbial respiration
+    # Convert SOM content to density (assuming bulk density ~1300 kg/m³)
+    som_density <- layer_props$som_content * 1300
+    
+    # Moisture stress factor (simplified)
+    moisture_stress <- exp(-((layer_props$water_content - input$moisture_optimum) / (input$moisture_optimum * 0.5))^2)
+    
+    microbial_respiration <- som_density * input$microbial_resp_rate * temp_factor_microbes * moisture_stress
+    
+    # Total respiration
+    total_respiration <- root_respiration + microbial_respiration
+    
+    list(
+      depths = layer_props$depths,
+      root_respiration = root_respiration,
+      microbial_respiration = microbial_respiration,
+      total_respiration = total_respiration,
+      root_density = layer_props$root_density,
+      som_density = som_density,
+      layer_id = layer_props$layer_id
+    )
+  })
+  
+  # Calculate surface oxygen concentration
+  calculate_surface_O2 <- reactive({
+    # Convert to SI units
+    P <- input$atmospheric_pressure * 1000  # Pa
+    f_O2 <- input$atmospheric_O2 / 100      # fraction
+    M_O2 <- 0.032                           # kg/mol
+    R <- 8.314                              # J/(mol·K)
+    T <- input$temperature + 273.15         # K
+    
+    # Ideal gas law: C = (P * f * M) / (R * T)
+    C_a <- (P * f_O2 * M_O2) / (R * T)
+    return(C_a)
+  })
+  
+  # Convert concentration units
+  convert_concentration <- function(conc_kg_m3, units, C_atm) {
+    switch(units,
+           "kg_m3" = conc_kg_m3,
+           "mg_m3" = conc_kg_m3 * 1000,
+           "percent" = (conc_kg_m3 / C_atm) * 100)
+  }
+  
+  # Get concentration axis label
+  get_conc_label <- function(units) {
+    switch(units,
+           "kg_m3" = "Oxygen Concentration (kg/m³)",
+           "mg_m3" = "Oxygen Concentration (mg/m³)",
+           "percent" = "Oxygen Concentration (%)")
+  }
+  
+  # Scientific notation helper
+  scientific <- function(x, digits = 2) {
+    formatC(x, format = "e", digits = digits)
+  }
+  
+  # Calculate how long each layer has been anaerobic
+  calculate_anaerobic_duration <- function(current_wfps, current_time, scenario, event_day) {
+    if (!input$enable_time_series || scenario == "steady") {
+      # For steady state, estimate based on current WFPS
+      if (current_wfps > 85) {
+        return(30)  # Assume long-term anaerobic
+      } else if (current_wfps > 70) {
+        return(5)   # Moderately anaerobic
+      } else {
+        return(0)   # Aerobic
+      }
+    }
+    
+    # For time series, calculate actual anaerobic duration
+    if (scenario == "rainfall" && current_time >= event_day) {
+      days_since_event <- current_time - event_day
+      if (current_wfps > 85) {
+        return(days_since_event)  # Anaerobic since the event
+      } else {
+        return(0)
+      }
+    } else if (scenario == "flood" && current_time >= event_day) {
+      days_since_flood <- current_time - event_day
+      if (current_wfps > 90) {
+        return(days_since_flood)  # Anaerobic since flood
+      } else {
+        return(0)
+      }
+    } else if (scenario == "seasonal") {
+      # Estimate anaerobic periods in seasonal cycle
+      cycle_position <- (current_time / 28) * 2 * pi
+      seasonal_wfps <- sin(cycle_position)
+      if (seasonal_wfps > 0.3 && current_wfps > 80) {
+        return(current_time * 0.3)  # Fraction of time anaerobic
+      } else {
+        return(0)
+      }
+    } else if (scenario == "drying") {
+      # Was anaerobic before drying started
+      if (current_time < event_day) {
+        return(event_day + 5)  # Was wet for a while before drying
+      } else {
+        return(0)  # Now drying out
+      }
+    }
+    
+    return(0)
+  }
+  
+  # Calculate redox potential from oxygen concentration with SOM, respiration, and time effects
+  calculate_eh_from_oxygen <- function(O2_conc_mg_L, pH, temp_C, som_content, respiration_rate, wfps, current_time, scenario, event_day, layer_depth) {
+    # Convert temperature to Kelvin
+    T_K <- temp_C + 273.15
+    
+    # Constants
+    R <- 8.314  # J/(mol·K)
+    F <- 96485  # C/mol
+    E0 <- 1.23  # Standard potential for O2/H2O couple (V)
+    
+    # Convert O2 concentration from mg/L to atmospheric partial pressure equivalent
+    O2_sat_mg_L <- 14.6 - 0.41 * temp_C + 0.008 * temp_C^2  # Temperature-dependent O2 saturation
+    O2_ratio <- pmax(1e-8, O2_conc_mg_L / O2_sat_mg_L)  # Prevent log(0)
+    
+    # Calculate additional reducing effects
+    
+    # 1. SOM Effect: More organic matter = more electron donors = lower Eh
+    som_effect <- -200 * som_content  # som_content is 0-0.15 (0-15%), so -0 to -30 mV
+    
+    # 2. Respiration Effect: High microbial activity = more reducing
+    respiration_ng_m3_s <- respiration_rate * 1e9  # Convert to ng/m³/s
+    respiration_effect <- -150 * log10(pmax(1, respiration_ng_m3_s) / 10)  # Scaled logarithmically
+    
+    # 3. Anaerobic Duration Effect: Longer anaerobic = more reduced compounds accumulate
+    anaerobic_days <- calculate_anaerobic_duration(wfps, current_time, scenario, event_day)
+    aging_effect <- -80 * sqrt(pmax(0, anaerobic_days))  # Stronger effect with time
+    
+    # 4. Depth Effect: Deeper soils tend to be more reduced
+    depth_effect <- -20 * layer_depth  # -20 mV per meter depth
+    
+    if (O2_conc_mg_L > 0.5) {
+      # Aerobic conditions: Use Nernst equation with organic matter effects
+      base_eh_mV <- (E0 - (R * T_K / F) * pH * 2.303 + (R * T_K / (4 * F)) * log(O2_ratio)) * 1000
+      
+      # Apply reducing effects (but limit them in aerobic conditions)
+      total_reducing_effect <- (som_effect + respiration_effect * 0.3 + aging_effect * 0.1 + depth_effect * 0.5)
+      Eh_mV <- base_eh_mV + total_reducing_effect
+      
+      # Realistic bounds for aerobic conditions
+      Eh_mV <- pmax(150, pmin(800, Eh_mV))
+      
+    } else if (O2_conc_mg_L > 0.05) {
+      # Transition zone: rapid Eh drop as O2 depletes
+      transition_factor <- (O2_conc_mg_L - 0.05) / (0.5 - 0.05)
+      aerobic_eh <- 400 - 59.2 * (pH - 7)
+      suboxic_eh <- 50 - 59.2 * (pH - 7)
+      
+      base_eh <- aerobic_eh * transition_factor + suboxic_eh * (1 - transition_factor)
+      
+      # Apply stronger reducing effects in transition
+      total_reducing_effect <- (som_effect + respiration_effect * 0.7 + aging_effect * 0.5 + depth_effect * 0.8)
+      Eh_mV <- base_eh + total_reducing_effect
+      
+      Eh_mV <- pmax(-100, pmin(400, Eh_mV))
+      
+    } else {
+      # Anaerobic conditions: All reducing effects fully active
+      
+      # Very low oxygen drives Eh down significantly
+      oxygen_depression <- -400 * (1 - O2_conc_mg_L / 0.05)
+      
+      # pH effect: -59.2 mV per pH unit above 7
+      ph_effect <- -59.2 * (pH - 7)
+      
+      # Base anaerobic potential
+      base_anaerobic_eh <- 100
+      
+      # Apply full reducing effects
+      total_reducing_effect <- (som_effect + respiration_effect + aging_effect + depth_effect)
+      
+      Eh_mV <- base_anaerobic_eh + ph_effect + oxygen_depression + total_reducing_effect
+      
+      # Realistic bounds for anaerobic conditions - now can go very negative!
+      Eh_mV <- pmax(-450, pmin(200, Eh_mV))
+    }
+    
+    return(Eh_mV)
+  }
+  
+  # Classify redox processes based on Eh
+  classify_redox_process <- function(eh_mV) {
+    if (eh_mV > 400) {
+      return("Aerobic (O₂ reduction)")
+    } else if (eh_mV > 250) {
+      return("Nitrate reduction")
+    } else if (eh_mV > 100) {
+      return("Manganese reduction")
+    } else if (eh_mV > -100) {
+      return("Iron reduction")
+    } else if (eh_mV > -200) {
+      return("Sulfate reduction")
+    } else {
+      return("Methanogenesis")
+    }
+  }
+  
+  # Main model calculation using layer-by-layer analytical approach
+  calculate_oxygen_profile <- reactive({
+    # This reactive will trigger whenever inputs change, including time
+    
+    # Get component calculations
+    diffusion_data <- calculate_diffusion()
+    respiration_data <- calculate_respiration()
+    C_a <- calculate_surface_O2()
+    
+    depths <- diffusion_data$depths
+    D_eff <- diffusion_data$D_eff
+    total_respiration <- respiration_data$total_respiration
+    layers <- get_active_layers()
+    
+    # Layer-by-layer analytical solution with continuity
+    n <- length(depths)
+    concentration <- numeric(n)
+    
+    # Start with surface concentration
+    current_surface_conc <- C_a
+    
+    # Solve each layer sequentially, ensuring continuity
+    for (layer_idx in seq_along(layers)) {
+      layer <- layers[[layer_idx]]
+      
+      # Find depths in this layer
+      layer_mask <- diffusion_data$layer_id == layer_idx
+      layer_depths <- depths[layer_mask]
+      layer_indices <- which(layer_mask)
+      
+      if (length(layer_depths) > 0) {
+        # Get average properties for this layer
+        layer_D_values <- D_eff[layer_mask]
+        layer_R_values <- total_respiration[layer_mask]
+        
+        avg_D <- mean(layer_D_values[layer_D_values > 0])
+        avg_R <- mean(layer_R_values[is.finite(layer_R_values)])
+        
+        # Ensure finite values
+        if (!is.finite(avg_D) || avg_D <= 0) avg_D <- 1e-12
+        if (!is.finite(avg_R) || avg_R < 0) avg_R <- 0
+        
+        # Calculate penetration depth for this layer
+        if (avg_R > 0) {
+          lambda <- sqrt(avg_D / avg_R)  # penetration depth
+        } else {
+          lambda <- 1e6  # Very large if no respiration
+        }
+        
+        # Solve within this layer: C(z) = C_top * exp(-(z-z_top)/lambda)
+        # where z is measured from the top of the layer
+        layer_top <- layer$top
+        
+        for (i in seq_along(layer_indices)) {
+          idx <- layer_indices[i]
+          relative_depth <- depths[idx] - layer_top
+          
+          # Exponential decay from the top of this layer
+          concentration[idx] <- current_surface_conc * exp(-relative_depth / lambda)
+        }
+        
+        # Set the surface concentration for the next layer
+        # This is the concentration at the bottom of the current layer
+        layer_bottom_depth <- layer$bottom - layer_top
+        current_surface_conc <- current_surface_conc * exp(-layer_bottom_depth / lambda)
+        
+        # Ensure concentration doesn't go below zero
+        current_surface_conc <- max(0, current_surface_conc)
+      }
+    }
+    
+    # Handle depths below the last defined layer
+    last_layer_bottom <- if (length(layers) > 0) layers[[length(layers)]]$bottom else 0
+    below_layers_mask <- depths > last_layer_bottom
+    
+    if (any(below_layers_mask)) {
+      # Use very low diffusion and low respiration for depths below defined layers
+      deep_D <- 1e-12
+      deep_R <- 1e-9
+      deep_lambda <- sqrt(deep_D / deep_R)
+      
+      below_indices <- which(below_layers_mask)
+      for (idx in below_indices) {
+        relative_depth <- depths[idx] - last_layer_bottom
+        concentration[idx] <- current_surface_conc * exp(-relative_depth / deep_lambda)
+      }
+    }
+    
+    # Ensure non-negative concentrations
+    concentration <- pmax(0, concentration)
+    
+    # Calculate redox potential if enabled
+    eh_profile <- numeric(n)
+    if (input$enable_eh) {
+      current_time <- if (input$enable_time_series) input$current_time else 0
+      scenario <- if (input$enable_time_series) input$time_scenario else "steady"
+      event_day <- if (input$enable_time_series) input$event_day else 5
+      
+      for (i in 1:n) {
+        # Convert concentration from kg/m³ to mg/L
+        O2_mg_L <- concentration[i] * 1000  # kg/m³ to mg/m³, assuming density ≈ 1
+        
+        # Get layer properties for this depth
+        layer_id <- diffusion_data$layer_id[i]
+        if (layer_id > 0 && layer_id <= length(layers)) {
+          som_content <- layers[[layer_id]]$som
+          wfps <- layers[[layer_id]]$wfps
+        } else {
+          som_content <- 0.01  # Default low SOM
+          wfps <- 50  # Default moderate WFPS
+        }
+        
+        eh_profile[i] <- calculate_eh_from_oxygen(
+          O2_mg_L, 
+          input$soil_pH, 
+          input$temperature,
+          som_content,
+          total_respiration[i],
+          wfps,
+          current_time,
+          scenario,
+          event_day,
+          depths[i]  # layer depth in meters
+        )
+      }
+    }
+    
+    # Calculate oxygen flux at each depth
+    flux <- numeric(n)
+    dz <- input$depth_resolution/100
+    for (i in 1:(n-1)) {
+      flux[i] <- -D_eff[i] * (concentration[i+1] - concentration[i]) / dz
+    }
+    flux[n] <- flux[n-1]  # Boundary condition
+    
+    # Store results
+    results <- data.frame(
+      depth_m = depths,
+      depth_cm = depths * 100,
+      concentration = concentration,
+      eh_mV = eh_profile,
+      total_respiration = total_respiration,
+      root_respiration = respiration_data$root_respiration,
+      microbial_respiration = respiration_data$microbial_respiration,
+      D_eff = D_eff,
+      flux = flux,
+      layer_id = diffusion_data$layer_id
+    )
+    
+    # Add metadata
+    attr(results, "C_a") <- C_a
+    attr(results, "layers") <- get_active_layers()
+    
+    return(results)
+  })
+  
+  # Update model button - now just triggers manual update
+  observeEvent(input$update_model, {
+    # Force recalculation by invalidating reactive
+    model_results(calculate_oxygen_profile())
+  })
+  
+  # Auto-update when time changes (if time series is enabled)
+  observe({
+    if (input$enable_time_series) {
+      # Auto-update when time slider changes
+      input$current_time
+      input$time_scenario
+      input$event_day
+      
+      # Update model results automatically
+      model_results(calculate_oxygen_profile())
+    }
+  })
+  
+  # Initialize model on startup
+  observe({
+    if (is.null(model_results())) {
+      # Initialize with calculated profile
+      model_results(calculate_oxygen_profile())
+    }
+  })
+  
+  # Main oxygen profile plot
+  output$oxygen_profile <- renderPlotly({
+    req(model_results())
+    
+    results <- model_results()
+    C_a <- attr(results, "C_a")
+    layers <- attr(results, "layers")
+    
+    # Convert concentration units
+    conc_display <- convert_concentration(results$concentration, input$conc_units, C_a)
+    conc_label <- get_conc_label(input$conc_units)
+    
+    # Create plot title with time information
+    plot_title <- "Multi-Layer Soil Oxygen Concentration Profile"
+    if (input$enable_time_series) {
+      plot_title <- paste0(plot_title, " (t = ", round(input$current_time, 1), " days, ", 
+                          input$time_scenario, " scenario)")
+    }
+    
+    if (input$enable_eh && any(!is.na(results$eh_mV))) {
+      # Dual-axis plot with both O2 and Eh
+      p <- plot_ly() %>%
+        # Oxygen concentration (primary y-axis)
+        add_trace(
+          x = conc_display, y = -results$depth_cm, 
+          type = 'scatter', mode = 'lines',
+          name = 'O₂ Concentration', 
+          line = list(width = 3, color = 'blue'),
+          hovertemplate = paste0("Depth: %{y} cm<br>",
+                                conc_label, ": %{x}<br>",
+                                "<extra></extra>")
+        ) %>%
+        # Redox potential (secondary y-axis, same y but different x-axis)
+        add_trace(
+          x = results$eh_mV, y = -results$depth_cm,
+          type = 'scatter', mode = 'lines',
+          name = 'Redox Potential (Eh)',
+          line = list(width = 3, color = 'red', dash = 'dash'),
+          xaxis = 'x2',
+          hovertemplate = paste0("Depth: %{y} cm<br>",
+                                "Eh: %{x} mV<br>",
+                                "<extra></extra>")
+        ) %>%
+        layout(
+          title = plot_title,
+          xaxis = list(
+            title = conc_label,
+            side = 'bottom',
+            color = 'blue'
+          ),
+          xaxis2 = list(
+            title = 'Redox Potential (mV)',
+            side = 'top',
+            overlaying = 'x',
+            color = 'red'
+          ),
+          yaxis = list(title = "Depth (cm)"),
+          hovermode = 'closest',
+          legend = list(x = 0.7, y = 0.9)
+        )
+      
+      # Add redox zone background colors
+      redox_zones <- list(
+        list(eh_range = c(400, 800), color = "rgba(135, 206, 250, 0.2)", name = "Aerobic"),
+        list(eh_range = c(250, 400), color = "rgba(255, 255, 0, 0.2)", name = "NO₃⁻ reduction"),
+        list(eh_range = c(100, 250), color = "rgba(255, 165, 0, 0.2)", name = "Mn reduction"),
+        list(eh_range = c(-100, 100), color = "rgba(139, 69, 19, 0.2)", name = "Fe reduction"),
+        list(eh_range = c(-200, -100), color = "rgba(128, 128, 128, 0.2)", name = "SO₄²⁻ reduction"),
+        list(eh_range = c(-400, -200), color = "rgba(0, 0, 0, 0.2)", name = "Methanogenesis")
+      )
+      
+      # Add vertical bands for redox zones (on Eh axis)
+      for (zone in redox_zones) {
+        p <- p %>% add_ribbons(
+          x = zone$eh_range,
+          ymin = min(-results$depth_cm),
+          ymax = max(-results$depth_cm),
+          fillcolor = zone$color,
+          line = list(color = "transparent"),
+          showlegend = FALSE,
+          xaxis = 'x2',
+          hoverinfo = 'none'
+        )
+      }
+      
+    } else {
+      # Standard single-axis oxygen plot
+      p <- plot_ly(results, x = ~conc_display, y = ~-depth_cm, type = 'scatter', mode = 'lines',
+                  name = 'Oxygen Concentration', line = list(width = 3, color = 'blue')) %>%
+        layout(
+          title = plot_title,
+          xaxis = list(title = conc_label),
+          yaxis = list(title = "Depth (cm)"),
+          hovermode = 'closest'
+        )
+    }
+    
+    # Add layer boundaries with current WFPS information
+    for (i in seq_along(layers)) {
+      layer <- layers[[i]]
+      
+      # Create boundary label with WFPS info
+      if (input$enable_time_series && !is.null(layer$base_wfps)) {
+        boundary_label <- paste0(layer$name, " (", round(layer$wfps, 1), "% WFPS)")
+      } else {
+        boundary_label <- paste0(layer$name, " (", round(layer$wfps, 1), "% WFPS)")
+      }
+      
+      max_x <- if (input$enable_eh) max(conc_display) else max(conc_display)
+      
+      p <- p %>% add_segments(
+        x = 0, xend = max_x, 
+        y = -layer$top*100, yend = -layer$top*100,
+        line = list(dash = "dot", color = layer$color, width = 1),
+        name = paste(boundary_label, "top"), showlegend = FALSE)
+      
+      p <- p %>% add_segments(
+        x = 0, xend = max_x, 
+        y = -layer$bottom*100, yend = -layer$bottom*100,
+        line = list(dash = "dot", color = layer$color, width = 1),
+        name = paste(boundary_label, "bottom"), showlegend = FALSE)
+    }
+    
+    p
+  })
+  
+  # Soil properties plot
+  output$soil_properties_plot <- renderPlotly({
+    layer_props <- calculate_layer_properties()
+    
+    df <- data.frame(
+      depth_cm = layer_props$depths * 100,
+      porosity = layer_props$porosity,
+      water_content = layer_props$water_content,
+      air_porosity = pmax(0, layer_props$porosity - layer_props$water_content),
+      root_density = layer_props$root_density,
+      som_content = layer_props$som_content * 100  # Convert to %
+    )
+    
+    plot_ly(df, y = ~-depth_cm) %>%
+      add_trace(x = ~porosity, name = 'Total Porosity', type = 'scatter', mode = 'lines',
+               line = list(color = 'blue')) %>%
+      add_trace(x = ~water_content, name = 'Water Content', type = 'scatter', mode = 'lines',
+               line = list(color = 'cyan')) %>%
+      add_trace(x = ~air_porosity, name = 'Air Porosity', type = 'scatter', mode = 'lines',
+               line = list(color = 'red')) %>%
+      layout(
+        title = "Soil Physical Properties vs Depth",
+        xaxis = list(title = "Volumetric Fraction"),
+        yaxis = list(title = "Depth (cm)")
+      )
+  })
+  
+  # Diffusion profile plot
+  output$diffusion_profile <- renderPlotly({
+    diffusion_data <- calculate_diffusion()
+    
+    df <- data.frame(
+      depth_cm = diffusion_data$depths * 100,
+      D_eff = diffusion_data$D_eff * 1e6,  # Convert to mm²/s
+      tortuosity = diffusion_data$tortuosity,
+      layer_id = diffusion_data$layer_id
+    )
+    
+    plot_ly(df, x = ~D_eff, y = ~-depth_cm, type = 'scatter', mode = 'lines',
+           name = 'Effective Diffusivity', line = list(color = 'green', width = 3)) %>%
+      layout(
+        title = "Diffusion Coefficient vs Depth",
+        xaxis = list(title = "Effective Diffusivity (mm²/s)"),
+        yaxis = list(title = "Depth (cm)")
+      )
+  })
+  
+  # Respiration components plot
+  output$respiration_components <- renderPlotly({
+    respiration_data <- calculate_respiration()
+    layers <- get_active_layers()
+    
+    df <- data.frame(
+      depth_cm = respiration_data$depths * 100,
+      root = respiration_data$root_respiration * 1e9,  # Convert to ng/m³/s
+      microbial = respiration_data$microbial_respiration * 1e9,
+      total = respiration_data$total_respiration * 1e9,
+      layer_id = respiration_data$layer_id
+    )
+    
+    p <- plot_ly(df, y = ~-depth_cm) %>%
+      add_trace(x = ~root, name = 'Root Respiration', type = 'scatter', mode = 'lines',
+               line = list(color = 'green')) %>%
+      add_trace(x = ~microbial, name = 'Microbial Respiration', type = 'scatter', mode = 'lines',
+               line = list(color = 'brown')) %>%
+      add_trace(x = ~total, name = 'Total Respiration', type = 'scatter', mode = 'lines',
+               line = list(color = 'black', width = 3)) %>%
+      layout(
+        title = "Respiration Components vs Depth",
+        xaxis = list(title = "Respiration Rate (ng O₂/m³/s)"),
+        yaxis = list(title = "Depth (cm)")
+      )
+    
+    # Add layer boundaries
+    for (i in seq_along(layers)) {
+      layer <- layers[[i]]
+      p <- p %>% add_segments(
+        x = 0, xend = max(df$total), 
+        y = -layer$top*100, yend = -layer$top*100,
+        line = list(dash = "dot", color = layer$color, width = 2),
+        name = paste(layer$name, "boundary"), showlegend = FALSE)
+    }
+    
+    p
+  })
+  
+  # Calculated parameters output
+  output$calculated_params <- renderText({
+    diffusion_data <- calculate_diffusion()
+    respiration_data <- calculate_respiration()
+    C_a <- calculate_surface_O2()
+    layers <- get_active_layers()
+    results <- model_results()
+    
+    # Convert surface concentration to different units
+    C_a_mg <- C_a * 1000
+    C_a_percent <- (C_a / C_a) * 100  # This is always 100% at surface
+    
+    # Calculate moisture metrics
+    surface_wfps <- diffusion_data$wfps[1]
+    max_wfps <- max(diffusion_data$wfps)
+    
+    # Redox information
+    redox_info <- ""
+    if (input$enable_eh && !is.null(results$eh_mV)) {
+      surface_eh <- results$eh_mV[1]
+      min_eh <- min(results$eh_mV)
+      surface_process <- classify_redox_process(surface_eh)
+      deepest_process <- classify_redox_process(min_eh)
+      
+      # Find anaerobic depth (Eh < 300 mV)
+      anaerobic_depths <- results$depth_cm[results$eh_mV < 300]
+      anaerobic_depth <- if (length(anaerobic_depths) > 0) min(anaerobic_depths) else "None"
+      
+      # Find methanogenic depth (Eh < -200 mV)
+      methane_depths <- results$depth_cm[results$eh_mV < -200]
+      methane_depth <- if (length(methane_depths) > 0) min(methane_depths) else "None"
+      
+      # Estimate anaerobic duration for surface layer
+      if (length(layers) > 0) {
+        current_time <- if (input$enable_time_series) input$current_time else 0
+        scenario <- if (input$enable_time_series) input$time_scenario else "steady"  
+        event_day <- if (input$enable_time_series) input$event_day else 5
+        
+        surface_anaerobic_days <- calculate_anaerobic_duration(
+          layers[[1]]$wfps, current_time, scenario, event_day
+        )
+      } else {
+        surface_anaerobic_days <- 0
+      }
+      
+      redox_info <- paste(
+        paste("=== REDOX STATUS ==="),
+        paste("Soil pH:", input$soil_pH),
+        paste("Surface Eh:", round(surface_eh), "mV"),
+        paste("Minimum Eh:", round(min_eh), "mV"),
+        paste("Surface process:", surface_process),
+        paste("Deepest process:", deepest_process),
+        paste("Anaerobic depth:", if (anaerobic_depth == "None") "None" else paste(round(anaerobic_depth, 1), "cm")),
+        paste("Methanogenic depth:", if (methane_depth == "None") "None" else paste(round(methane_depth, 1), "cm")),
+        paste("Surface anaerobic duration:", round(surface_anaerobic_days, 1), "days"),
+        "",
+        sep = "\n"
+      )
+    }
+    
+    # Time series information
+    time_info <- ""
+    if (input$enable_time_series) {
+      time_info <- paste(
+        paste("=== TIME SERIES ==="),
+        paste("Current Time:", round(input$current_time, 1), "days"),
+        paste("Scenario:", input$time_scenario),
+        paste("Event Day:", input$event_day),
+        "",
+        paste("Layer WFPS Changes:"),
+        if (length(layers) >= 1) paste("  Layer 1:", round(layers[[1]]$base_wfps, 1), "% →", round(layers[[1]]$wfps, 1), "%") else "",
+        if (length(layers) >= 2) paste("  Layer 2:", round(layers[[2]]$base_wfps, 1), "% →", round(layers[[2]]$wfps, 1), "%") else "",
+        if (length(layers) >= 3) paste("  Layer 3:", round(layers[[3]]$base_wfps, 1), "% →", round(layers[[3]]$wfps, 1), "%") else "",
+        if (length(layers) >= 4) paste("  Layer 4:", round(layers[[4]]$base_wfps, 1), "% →", round(layers[[4]]$wfps, 1), "%") else "",
+        "",
+        sep = "\n"
+      )
+    }
+    
+    paste(
+      redox_info,
+      time_info,
+      paste("Number of Active Layers:", length(layers)),
+      paste("Surface O₂ Concentration:"),
+      paste("  ", round(C_a, 4), "kg/m³"),
+      paste("  ", round(C_a_mg, 1), "mg/m³"),
+      paste("  ", round(C_a_percent, 1), "%"),
+      "",
+      paste("Current Moisture Status:"),
+      paste("  Surface WFPS:", round(surface_wfps, 1), "%"),
+      paste("  Maximum WFPS:", round(max_wfps, 1), "%"),
+      paste("  Layers >85% WFPS:", sum(diffusion_data$wfps > 85)),
+      paste("  Surface air fraction:", round(diffusion_data$air_fraction[1], 3)),
+      "",
+      paste("Free Air Diffusivity:", round(diffusion_data$D0 * 1e6, 2), "mm²/s"),
+      paste("Effective Diffusivity Range:"),
+      paste("  ", scientific(min(diffusion_data$D_eff), 2), "-", 
+            scientific(max(diffusion_data$D_eff), 2), "m²/s"),
+      "",
+      paste("Surface Respiration Components:"),
+      paste("  Root:", round(respiration_data$root_respiration[1] * 1e9, 2), "ng/m³/s"),
+      paste("  Microbial:", round(respiration_data$microbial_respiration[1] * 1e9, 2), "ng/m³/s"),
+      paste("  Total:", round(respiration_data$total_respiration[1] * 1e9, 2), "ng/m³/s"),
+      sep = "\n"
+    )
+  })
+  
+  # Model information
+  output$model_info <- renderText({
+    req(model_results())
+    
+    results <- model_results()
+    C_a <- attr(results, "C_a")
+    layers <- attr(results, "layers")
+    
+    # Calculate some summary statistics
+    min_conc <- min(results$concentration)
+    min_depth_cm <- results$depth_cm[which.min(results$concentration)]
+    surface_flux <- results$flux[1]
+    
+    # Convert to different units
+    min_conc_mg <- min_conc * 1000
+    min_conc_percent <- (min_conc / C_a) * 100
+    
+    info <- paste(
+      paste("Model Type: Multi-layer numerical solution"),
+      paste("Active Layers:", length(layers)),
+      "",
+      paste("Minimum O₂ Concentration:"),
+      paste("  ", round(min_conc, 6), "kg/m³"),
+      paste("  ", round(min_conc_mg, 2), "mg/m³"),
+      paste("  ", round(min_conc_percent, 1), "%"),
+      paste("  at depth:", round(min_depth_cm, 1), "cm"),
+      "",
+      paste("Surface O₂ Flux:", round(surface_flux * 1e9, 2), "ng/m²/s"),
+      paste("Depth Resolution:", input$depth_resolution, "cm"),
+      sep = "\n"
+    )
+    
+    return(info)
+  })
+  
+  # Respiration data table
+  output$respiration_table <- DT::renderDataTable({
+    respiration_data <- calculate_respiration()
+    layers <- get_active_layers()
+    
+    # Create layer names
+    layer_names <- character(length(respiration_data$layer_id))
+    for (i in seq_along(respiration_data$layer_id)) {
+      if (respiration_data$layer_id[i] > 0 && respiration_data$layer_id[i] <= length(layers)) {
+        layer_names[i] <- layers[[respiration_data$layer_id[i]]]$name
+      } else {
+        layer_names[i] <- "Outside layers"
+      }
+    }
+    
+    display_data <- data.frame(
+      Depth_cm = round(respiration_data$depths * 100, 1),
+      Layer = layer_names,
+      Root_Density_kg_m3 = round(respiration_data$root_density, 3),
+      SOM_Density_kg_m3 = round(respiration_data$som_density, 1),
+      Root_Respiration_ng_m3_s = round(respiration_data$root_respiration * 1e9, 2),
+      Microbial_Respiration_ng_m3_s = round(respiration_data$microbial_respiration * 1e9, 2),
+      Total_Respiration_ng_m3_s = round(respiration_data$total_respiration * 1e9, 2)
+    )
+    
+    datatable(display_data, 
+              options = list(pageLength = 15, scrollY = "400px"),
+              colnames = c("Depth (cm)", "Layer", "Root Density (kg/m³)", 
+                          "SOM Density (kg/m³)", "Root Resp. (ng/m³/s)",
+                          "Microbial Resp. (ng/m³/s)", "Total Resp. (ng/m³/s)"))
+  })
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
